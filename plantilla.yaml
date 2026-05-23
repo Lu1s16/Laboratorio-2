@@ -1,0 +1,272 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: "Arquitectura de alta disponibilidad con 5 servidores EC2 con NGINX, balanceador ELB y distribuido en 2 AZs"
+
+Parameters:
+  KeyName:
+    Description: "Nombre del key pair para acceder a las instancias EC2"
+    Type: "AWS::EC2::KeyPair::KeyName"
+    Default: "lab2"
+  
+  InstanceType:
+    Description: "Tipo de instancia EC2"
+    Type: "String"
+    Default: "t2.micro"
+    AllowedValues:
+      - "t2.micro"
+      - "t2.small"
+      - "t3.micro"
+  
+  VPCId:
+    Description: "ID del VPC donde desplegar los recursos"
+    Type: "AWS::EC2::VPC::Id"
+    Default: "vpc-xxxxxxxx"  # Reemplazar con tu VPC ID
+  
+  SubnetAZ1:
+    Description: "Subnet ID en Zona de Disponibilidad 1"
+    Type: "AWS::EC2::Subnet::Id"
+    Default: "subnet-xxxxxxxx"  # Reemplazar con tu Subnet ID en AZ1
+  
+  SubnetAZ2:
+    Description: "Subnet ID en Zona de Disponibilidad 2"
+    Type: "AWS::EC2::Subnet::Id"
+    Default: "subnet-yyyyyyyy"  # Reemplazar con tu Subnet ID en AZ2
+
+Mappings:
+  RegionMap:
+    us-east-1:
+      AMI: "ami-0c55b159cbfafe1f0"   # Amazon Linux 2 - VERIFICADO
+    us-east-2:
+      AMI: "ami-0112df1773dab78d9"   # Amazon Linux 2 x86_64[citation:7]
+    us-west-1:
+      AMI: "ami-0defbc65ceaa32dd1"   # Amazon Linux 2 - VERIFICADO
+    us-west-2:
+      AMI: "ami-0b8b44ec9a8f90422"   # Amazon Linux 2 - VERIFICADO
+    eu-west-1:
+      AMI: "ami-07ee5053aa22fcc0e"   # Amazon Linux 2 - VERIFICADO
+    eu-central-1:
+      AMI: "ami-0ea202151b77cd132"   # Amazon Linux 2 - VERIFICADO
+    ap-southeast-1:
+      AMI: "ami-052adc4e5f2b331d3"   # Amazon Linux 2 - VERIFICADO
+    ap-northeast-1:
+      AMI: "ami-0337fff9cddb16928"   # Amazon Linux 2 - VERIFICADO
+
+Resources:
+  # Security Group para EC2
+  WebServerSecurityGroup:
+    Type: "AWS::EC2::SecurityGroup"
+    Properties:
+      GroupDescription: "Security group para servidores web NGINX"
+      VpcId: !Ref VPCId
+      SecurityGroupIngress:
+        - IpProtocol: "tcp"
+          FromPort: 22
+          ToPort: 22
+          CidrIp: "0.0.0.0/0"
+          Description: "SSH access"
+        - IpProtocol: "tcp"
+          FromPort: 80
+          ToPort: 80
+          CidrIp: "0.0.0.0/0"
+          Description: "HTTP access"
+        - IpProtocol: "tcp"
+          FromPort: 443
+          ToPort: 443
+          CidrIp: "0.0.0.0/0"
+          Description: "HTTPS access"
+        - IpProtocol: "tcp"
+          FromPort: 8000
+          ToPort: 8000
+          CidrIp: "0.0.0.0/0"
+          Description: "ELB health check"
+  
+  # Security Group para ELB
+  ELBSecurityGroup:
+    Type: "AWS::EC2::SecurityGroup"
+    Properties:
+      GroupDescription: "Security group para el balanceador de carga"
+      VpcId: !Ref VPCId
+      SecurityGroupIngress:
+        - IpProtocol: "tcp"
+          FromPort: 80
+          ToPort: 80
+          CidrIp: "0.0.0.0/0"
+          Description: "HTTP access from internet"
+        - IpProtocol: "tcp"
+          FromPort: 443
+          ToPort: 443
+          CidrIp: "0.0.0.0/0"
+          Description: "HTTPS access from internet"
+  
+  # Role y Policy para que las instancias EC2 puedan ser gestionadas por SSM
+  WebServerRole:
+    Type: "AWS::IAM::Role"
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: "Allow"
+            Principal:
+              Service: "ec2.amazonaws.com"
+            Action: "sts:AssumeRole"
+      ManagedPolicyArns:
+        - "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
+  
+  WebServerInstanceProfile:
+    Type: "AWS::IAM::InstanceProfile"
+    Properties:
+      Roles:
+        - !Ref WebServerRole
+  
+  # Launch Template para las instancias EC2
+  WebServerLaunchTemplate:
+    Type: "AWS::EC2::LaunchTemplate"
+    Properties:
+      LaunchTemplateName: "nginx-web-server-template"
+      LaunchTemplateData:
+        ImageId: !FindInMap [RegionMap, !Ref "AWS::Region", AMI]
+        InstanceType: !Ref InstanceType
+        KeyName: !Ref KeyName
+        SecurityGroupIds:
+          - !Ref WebServerSecurityGroup
+        IamInstanceProfile:
+          Name: !Ref WebServerInstanceProfile
+        UserData:
+          Fn::Base64: !Sub |
+            #!/bin/bash
+            # Actualizar el sistema e instalar NGINX
+            yum update -y
+            yum install -y nginx
+            systemctl start nginx
+            systemctl enable nginx
+            
+            # Crear página web personalizada
+            cat > /usr/share/nginx/html/index.html << EOF
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <title>Alta Disponibilidad NGINX</title>
+                <style>
+                    body {
+                        font-family: Arial, sans-serif;
+                        text-align: center;
+                        padding: 50px;
+                        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                        color: white;
+                    }
+                    h1 {
+                        font-size: 48px;
+                        margin-bottom: 20px;
+                    }
+                    .server-info {
+                        background: rgba(255,255,255,0.2);
+                        padding: 20px;
+                        border-radius: 10px;
+                        margin-top: 30px;
+                    }
+                </style>
+            </head>
+            <body>
+                <h1>Bienvenido al Cluster NGINX</h1>
+                <p>¡Este sitio web está siendo servido con alta disponibilidad!</p>
+                <div class="server-info">
+                    <p><strong>Servidor:</strong> $(hostname -f)</p>
+                    <p><strong>IP Privada:</strong> $(hostname -I | cut -d' ' -f1)</p>
+                    <p><strong>Zona de Disponibilidad:</strong> $(curl -s http://169.254.169.254/latest/meta-data/placement/availability-zone)</p>
+                    <p><strong>Fecha y Hora:</strong> $(date)</p>
+                </div>
+            </body>
+            </html>
+            EOF
+            
+            # Configurar health check endpoint
+            echo "OK" > /usr/share/nginx/html/health
+            
+            # Reiniciar NGINX
+            systemctl restart nginx
+  
+  # Auto Scaling Group
+  WebServerAutoScalingGroup:
+    Type: "AWS::AutoScaling::AutoScalingGroup"
+    Properties:
+      AutoScalingGroupName: "nginx-ha-asg"
+      LaunchTemplate:
+        LaunchTemplateId: !Ref WebServerLaunchTemplate
+        Version: !GetAtt WebServerLaunchTemplate.LatestVersionNumber
+      MinSize: "5"
+      MaxSize: "5"
+      DesiredCapacity: "5"
+      HealthCheckType: "ELB"
+      HealthCheckGracePeriod: 300
+      VPCZoneIdentifier:
+        - !Ref SubnetAZ1
+        - !Ref SubnetAZ2
+      TargetGroupARNs:
+        - !Ref WebTargetGroup
+      Tags:
+        - Key: "Name"
+          Value: "nginx-web-server"
+          PropagateAtLaunch: true
+        - Key: "Environment"
+          Value: "production"
+          PropagateAtLaunch: true
+  
+  # Application Load Balancer
+  ApplicationLoadBalancer:
+    Type: "AWS::ElasticLoadBalancingV2::LoadBalancer"
+    Properties:
+      Name: "nginx-alb"
+      Scheme: "internet-facing"
+      Type: "application"
+      IpAddressType: "ipv4"
+      SecurityGroups:
+        - !Ref ELBSecurityGroup
+      Subnets:
+        - !Ref SubnetAZ1
+        - !Ref SubnetAZ2
+  
+  # Target Group
+  WebTargetGroup:
+    Type: "AWS::ElasticLoadBalancingV2::TargetGroup"
+    Properties:
+      Name: "nginx-target-group"
+      Protocol: "HTTP"
+      Port: 80
+      VpcId: !Ref VPCId
+      HealthCheckEnabled: true
+      HealthCheckPath: "/health"
+      HealthCheckProtocol: "HTTP"
+      HealthCheckPort: "80"
+      HealthCheckIntervalSeconds: 30
+      HealthCheckTimeoutSeconds: 5
+      HealthyThresholdCount: 2
+      UnhealthyThresholdCount: 2
+      TargetType: "instance"
+  
+  # Listener para HTTP
+  LoadBalancerListener:
+    Type: "AWS::ElasticLoadBalancingV2::Listener"
+    Properties:
+      DefaultActions:
+        - Type: "forward"
+          TargetGroupArn: !Ref WebTargetGroup
+      LoadBalancerArn: !Ref ApplicationLoadBalancer
+      Port: 80
+      Protocol: "HTTP"
+  
+# Outputs
+Outputs:
+    LoadBalancerDNS:
+        Description: "DNS Name del Application Load Balancer"
+        Value: !GetAtt ApplicationLoadBalancer.DNSName
+  
+    AutoScalingGroupName:
+      Description: "Nombre del Auto Scaling Group"
+      Value: !Ref WebServerAutoScalingGroup
+    
+    WebServerSecurityGroupID:
+      Description: "ID del Security Group de los servidores web"
+      Value: !Ref WebServerSecurityGroup
+    
+    TargetGroupArn:
+      Description: "ARN del Target Group"
+      Value: !Ref WebTargetGroup
