@@ -1,5 +1,5 @@
 AWSTemplateFormatVersion: "2010-09-09"
-Description: "Arquitectura de alta disponibilidad con 5 servidores EC2 con NGINX, balanceador ELB y distribuido en 2 AZs"
+Description: "Arquitectura de alta disponibilidad optimizada para AWS Free Tier - 2 servidores EC2 t2.micro con NGINX, ELB y distribuido en 2 AZs"
 
 Parameters:
   KeyName:
@@ -8,13 +8,13 @@ Parameters:
     Default: "lab2"
   
   InstanceType:
-    Description: "Tipo de instancia EC2"
+    Description: "Tipo de instancia EC2 (t2.micro incluido en Free Tier)"
     Type: "String"
     Default: "t2.micro"
     AllowedValues:
       - "t2.micro"
-      - "t2.small"
-      - "t3.micro"
+      - "t2.nano"
+    ConstraintDescription: "Para mantenerse dentro del Free Tier, use t2.micro (750 hrs/mes gratis) o t2.nano"
   
   VPCId:
     Description: "ID del VPC donde desplegar los recursos"
@@ -34,21 +34,21 @@ Parameters:
 Mappings:
   RegionMap:
     us-east-1:
-      AMI: "ami-0c55b159cbfafe1f0"   # Amazon Linux 2 - VERIFICADO
+      AMI: "ami-0c55b159cbfafe1f0"
     us-east-2:
-      AMI: "ami-0112df1773dab78d9"   # Amazon Linux 2 x86_64[citation:7]
+      AMI: "ami-0112df1773dab78d9"
     us-west-1:
-      AMI: "ami-0defbc65ceaa32dd1"   # Amazon Linux 2 - VERIFICADO
+      AMI: "ami-0defbc65ceaa32dd1"
     us-west-2:
-      AMI: "ami-0b8b44ec9a8f90422"   # Amazon Linux 2 - VERIFICADO
+      AMI: "ami-0b8b44ec9a8f90422"
     eu-west-1:
-      AMI: "ami-07ee5053aa22fcc0e"   # Amazon Linux 2 - VERIFICADO
+      AMI: "ami-07ee5053aa22fcc0e"
     eu-central-1:
-      AMI: "ami-0ea202151b77cd132"   # Amazon Linux 2 - VERIFICADO
+      AMI: "ami-0ea202151b77cd132"
     ap-southeast-1:
-      AMI: "ami-052adc4e5f2b331d3"   # Amazon Linux 2 - VERIFICADO
+      AMI: "ami-052adc4e5f2b331d3"
     ap-northeast-1:
-      AMI: "ami-0337fff9cddb16928"   # Amazon Linux 2 - VERIFICADO
+      AMI: "ami-0337fff9cddb16928"
 
 Resources:
   # Security Group para EC2
@@ -97,7 +97,7 @@ Resources:
           CidrIp: "0.0.0.0/0"
           Description: "HTTPS access from internet"
   
-  # Role y Policy para que las instancias EC2 puedan ser gestionadas por SSM
+  # Role y Policy para SSM (sigue siendo gratuito - solo paga por recursos AWS subyacentes)
   WebServerRole:
     Type: "AWS::IAM::Role"
     Properties:
@@ -117,7 +117,7 @@ Resources:
       Roles:
         - !Ref WebServerRole
   
-  # Launch Template para las instancias EC2
+  # Launch Template - t2.micro para Free Tier
   WebServerLaunchTemplate:
     Type: "AWS::EC2::LaunchTemplate"
     Properties:
@@ -139,22 +139,29 @@ Resources:
             systemctl start nginx
             systemctl enable nginx
             
-            # Crear página web personalizada
+            # Crear p?gina web personalizada
             cat > /usr/share/nginx/html/index.html << EOF
             <!DOCTYPE html>
             <html>
             <head>
-                <title>Alta Disponibilidad NGINX</title>
+                <title>Alta Disponibilidad NGINX - Free Tier</title>
                 <style>
                     body {
                         font-family: Arial, sans-serif;
                         text-align: center;
                         padding: 50px;
-                        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                        background: linear-gradient(135deg, #2ecc71 0%, #27ae60 100%);
                         color: white;
                     }
                     h1 {
                         font-size: 48px;
+                        margin-bottom: 20px;
+                    }
+                    .free-tier-badge {
+                        background: #f39c12;
+                        padding: 10px;
+                        border-radius: 5px;
+                        display: inline-block;
                         margin-bottom: 20px;
                     }
                     .server-info {
@@ -166,8 +173,11 @@ Resources:
                 </style>
             </head>
             <body>
+                <div class="free-tier-badge">
+                    ? OPTIMIZADO PARA AWS FREE TIER
+                </div>
                 <h1>Bienvenido al Cluster NGINX</h1>
-                <p>¡Este sitio web está siendo servido con alta disponibilidad!</p>
+                <p>?Arquitectura de alta disponibilidad sin costo adicional!</p>
                 <div class="server-info">
                     <p><strong>Servidor:</strong> $(hostname -f)</p>
                     <p><strong>IP Privada:</strong> $(hostname -I | cut -d' ' -f1)</p>
@@ -184,7 +194,7 @@ Resources:
             # Reiniciar NGINX
             systemctl restart nginx
   
-  # Auto Scaling Group
+  # Auto Scaling Group - Configurado para 2 instancias (optimizaci?n Free Tier)
   WebServerAutoScalingGroup:
     Type: "AWS::AutoScaling::AutoScalingGroup"
     Properties:
@@ -192,9 +202,9 @@ Resources:
       LaunchTemplate:
         LaunchTemplateId: !Ref WebServerLaunchTemplate
         Version: !GetAtt WebServerLaunchTemplate.LatestVersionNumber
-      MinSize: "5"
-      MaxSize: "5"
-      DesiredCapacity: "5"
+      MinSize: "2"
+      MaxSize: "2"
+      DesiredCapacity: "2"
       HealthCheckType: "ELB"
       HealthCheckGracePeriod: 300
       VPCZoneIdentifier:
@@ -204,17 +214,17 @@ Resources:
         - !Ref WebTargetGroup
       Tags:
         - Key: "Name"
-          Value: "nginx-web-server"
+          Value: "nginx-web-server-free-tier"
           PropagateAtLaunch: true
         - Key: "Environment"
-          Value: "production"
+          Value: "free-tier"
           PropagateAtLaunch: true
   
-  # Application Load Balancer
+  # Application Load Balancer (750 horas/mes gratis)
   ApplicationLoadBalancer:
     Type: "AWS::ElasticLoadBalancingV2::LoadBalancer"
     Properties:
-      Name: "nginx-alb"
+      Name: "nginx-alb-free"
       Scheme: "internet-facing"
       Type: "application"
       IpAddressType: "ipv4"
@@ -228,7 +238,7 @@ Resources:
   WebTargetGroup:
     Type: "AWS::ElasticLoadBalancingV2::TargetGroup"
     Properties:
-      Name: "nginx-target-group"
+      Name: "nginx-target-group-free"
       Protocol: "HTTP"
       Port: 80
       VpcId: !Ref VPCId
@@ -252,21 +262,25 @@ Resources:
       LoadBalancerArn: !Ref ApplicationLoadBalancer
       Port: 80
       Protocol: "HTTP"
-  
+
 # Outputs
 Outputs:
-    LoadBalancerDNS:
-        Description: "DNS Name del Application Load Balancer"
-        Value: !GetAtt ApplicationLoadBalancer.DNSName
+  LoadBalancerDNS:
+    Description: "DNS Name del Application Load Balancer (Free Tier)"
+    Value: !GetAtt ApplicationLoadBalancer.DNSName
   
-    AutoScalingGroupName:
-      Description: "Nombre del Auto Scaling Group"
-      Value: !Ref WebServerAutoScalingGroup
-    
-    WebServerSecurityGroupID:
-      Description: "ID del Security Group de los servidores web"
-      Value: !Ref WebServerSecurityGroup
-    
-    TargetGroupArn:
-      Description: "ARN del Target Group"
-      Value: !Ref WebTargetGroup
+  FreeTierInfo:
+    Description: "INFORMACI?N FREE TIER: 2 instancias t2.micro (750hrs/mes) + ALB (750hrs/mes) incluidos"
+    Value: "Usa t2.micro para mantenerte en Free Tier. 2 instancias consumen ~1488 hrs/mes - no excedas el l?mite de 750hrs gratuitas mensuales. Considera detener el stack cuando no lo uses."
+  
+  AutoScalingGroupName:
+    Description: "Nombre del Auto Scaling Group"
+    Value: !Ref WebServerAutoScalingGroup
+  
+  WebServerSecurityGroupID:
+    Description: "ID del Security Group de los servidores web"
+    Value: !Ref WebServerSecurityGroup
+  
+  TargetGroupArn:
+    Description: "ARN del Target Group"
+    Value: !Ref WebTargetGroup
